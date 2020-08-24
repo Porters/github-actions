@@ -1,0 +1,66 @@
+name: deploy
+on:
+  push:
+    branches:
+      - master
+  release:
+    types:
+      - published
+env:
+  IS_RELEASE: ${{ github.event_name == 'release'}}
+  PROJECT_DIR: ./
+  AWS_ACCESS_KEY_ID: ${{ secrets.MPRO_DEPLOYER_AWS_ACCESS_KEY_ID }}
+  AWS_SECRET_ACCESS_KEY: ${{ secrets.MPRO_DEPLOYER_AWS_SECRET_ACCESS_KEY }}
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    if: "!contains(github.event.head_commit.message, '***NO_CI***')"
+    steps:
+      - name: Set up env
+        run: |
+          echo "::set-env name=NPM_AUTH_TOKEN::${{ secrets.NPM_REGISTRY_TOKEN }}"
+          echo GITHUB_EVENT_NAME $GITHUB_EVENT_NAME
+          echo GITHUB_REF $GITHUB_REF
+      - name: Checkout
+        uses: actions/checkout@v2
+      - name: Configure AWS Credentials (test)
+        if: env.IS_RELEASE == 'false'
+        uses: aws-actions/configure-aws-credentials@v1
+        with:
+          aws-access-key-id: ${{ env.AWS_ACCESS_KEY_ID }}
+          aws-secret-access-key: ${{ env.AWS_SECRET_ACCESS_KEY }}
+          role-to-assume: arn:aws:iam::844380402068:role/OrganizationAccountAdminAccessRole
+          aws-region: ap-northeast-1
+          role-duration-seconds: 1800
+          role-session-name: mpro-test-deployer
+      - name: Configure AWS Credentials (prod)
+        if: env.IS_RELEASE == 'true'
+        uses: aws-actions/configure-aws-credentials@v1
+        with:
+          aws-access-key-id: ${{ env.AWS_ACCESS_KEY_ID }}
+          aws-secret-access-key: ${{ env.AWS_SECRET_ACCESS_KEY }}
+          aws-region: ap-northeast-1
+      - name: Deploy to test env
+        if: env.IS_RELEASE == 'false'
+        env:
+          ENV: test
+          WEBHOOK_URL: ${{ secrets.WEBHOOK_URL_TEST }}
+          WEBHOOK_MSG_CONTENT: >
+            # A new build for **${{ github.repository }}** have been deployed to **test** environment.
+            The last commit message *[${{ github.event.head_commit.message }}]* committed by
+            **${{ github.event.head_commit.author.name }}**
+        run: |
+          aws eks update-kubeconfig --name mpro-$ENV-eks --region ap-northeast-1 --role-arn arn:aws:iam::$(aws sts get-caller-identity --query Account --output text):role/mpro-$ENV-eks-admin
+          cd ${{ env.PROJECT_DIR }} && yarn deploy:$ENV
+      - name: Deploy to prod env
+        if: env.IS_RELEASE == 'true'
+        env:
+          ENV: prod
+          WEBHOOK_URL: ${{ secrets.WEBHOOK_URL_PROD }}
+          WEBHOOK_MSG_CONTENT: >
+            # A new release for **${{github.repository}}** have been deployed to **production** environment.
+            [${{github.event.release.tag_name}}](${{github.event.release.html_url}}) released by **${{ github.event.release.author.login }}**.
+            \n\n${{ github.event.release.body }}
+        run: |
+          aws eks update-kubeconfig --name mpro-$ENV-eks --region ap-northeast-1 --role-arn arn:aws:iam::$(aws sts get-caller-identity --query Account --output text):role/mpro-$ENV-eks-admin
+          cd ${{ env.PROJECT_DIR }} && yarn deploy:$ENV

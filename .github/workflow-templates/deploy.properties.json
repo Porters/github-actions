@@ -1,0 +1,8 @@
+{
+    "name": "K8s application deploy workflow",
+    "description": "CI deploy workflow template for Kubernetes application.",
+    "iconName": "deploy",
+    "categories": [
+        "k8s"
+    ]
+}
